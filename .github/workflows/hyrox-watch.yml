@@ -1,0 +1,33 @@
+name: hyrox-watch
+ 
+on:
+  schedule:
+    # Every 10 minutes. GitHub's scheduler drifts 10-15 min under load and can
+    # skip runs entirely — fine for this. Bump to '*/5 * * * *' for the two
+    # refund windows: 7-10 Nov and 1-4 Dec 2026.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:        # manual run — also resets the 60-day inactivity timer
+ 
+concurrency:
+  group: hyrox-watch
+  cancel-in-progress: false
+ 
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    container:
+      # Browsers are preinstalled here, so no download on every run.
+      # Keep this tag in step with the playwright version in package.json.
+      image: mcr.microsoft.com/playwright:v1.47.0-jammy
+    steps:
+      - uses: actions/checkout@v4
+ 
+      - name: Install deps
+        run: npm install --no-audit --no-fund
+ 
+      - name: Check ticket availability
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: node watch.js
+ 
