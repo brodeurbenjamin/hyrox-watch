@@ -21,7 +21,7 @@ jobs:
       # Keep this tag in step with the playwright version in package.json.
       image: mcr.microsoft.com/playwright:v1.47.0-jammy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
  
       - name: Install deps
         run: npm install --no-audit --no-fund
