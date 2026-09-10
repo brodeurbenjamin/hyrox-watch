@@ -76,7 +76,7 @@ try {
     const res = await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
       method: 'POST',
       headers: {
-        Title: 'HYROX Nashville — PRO MEN AVAILABLE',
+        Title: 'HYROX Nashville - PRO MEN AVAILABLE',
         Priority: 'urgent',
         Click: CHECKOUT,
       },
