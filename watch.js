@@ -19,7 +19,7 @@
  
 import { chromium } from 'playwright';
  
-const CHECKOUT = 'https://usa.hyrox.com/checkout/69d5351836e6061602da463d';
+const CHECKOUT = 'https://usa.hyrox.com/checkout/6a3d13c2debf197348ab0564';
 const TICKET_NAME = 'HYROX PRO MEN | Friday';
 const NTFY_TOPIC = process.env.NTFY_TOPIC;
  
