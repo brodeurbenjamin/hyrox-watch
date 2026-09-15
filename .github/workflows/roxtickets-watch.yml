@@ -1,0 +1,19 @@
+name: roxtickets-watch
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+concurrency:
+  group: roxtickets-watch
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check listings
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          ROX_TOKEN: ${{ secrets.ROX_TOKEN }}
+        run: node roxtickets-watch.js
