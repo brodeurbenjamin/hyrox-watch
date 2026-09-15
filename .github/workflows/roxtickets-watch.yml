@@ -3,6 +3,8 @@ on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
+permissions:
+  contents: write
 concurrency:
   group: roxtickets-watch
   cancel-in-progress: false
@@ -17,3 +19,10 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           ROX_TOKEN: ${{ secrets.ROX_TOKEN }}
         run: node roxtickets-watch.js
+      - name: Save state
+        run: |
+          git config user.name "roxtickets-watch bot"
+          git config user.email "actions@github.com"
+          git add state.json
+          git diff --staged --quiet || git commit -m "update state"
+          git push
