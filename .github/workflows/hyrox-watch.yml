@@ -3,8 +3,8 @@ name: hyrox-watch
 on:
   schedule:
     # Every 10 minutes. GitHub's scheduler drifts 10-15 min under load and can
-    # skip runs entirely — fine for this. Bump to '*/5 * * * *' for the two
-    # refund windows: 7-10 Nov and 1-4 Dec 2026.
+    # skip runs entirely — fine for this. Currently watching HYROX Paris
+    # (12-20 Dec 2026) for Women's Open.
     - cron: '*/10 * * * *'
   workflow_dispatch:        # manual run — also resets the 60-day inactivity timer
  

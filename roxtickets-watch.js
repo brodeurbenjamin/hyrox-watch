@@ -10,12 +10,19 @@
  * Each entry in `ticketData` is one individual seller's listing (this is a
  * peer marketplace, not an inventory feed) with category, price, and status.
  *
- * CONFIRMED — a Pro Men listing on roxtickets.app uses:
- *   category_type: "mens", category_name: "Mens Pro"
- * (captured 15 Sep 2026 from a real Men's Pro listing response). PRO_MEN_RE
- * matches that exact string. FALLBACK_RE stays loose, in case HYROX or the
- * app ever renames the category — a fallback hit still alerts, just at a
- * lower priority so an unexpected string doesn't masquerade as confirmed.
+ * TARGET (28 Sep 2026): Paris, Women's Open.
+ *
+ * Category naming seen in real captures: "Mens Pro", "Mens Open",
+ * "Mixed Doubles". By that pattern Women's Open should be "Womens Open", and
+ * TARGET_RE matches that exact string. It has NOT been seen in a capture yet,
+ * so FALLBACK_RE casts a wider net ("Women's Open", "Open Women", etc.). A
+ * fallback hit still alerts, one priority lower, and the alert quotes the
+ * real category name so the exact string can be locked in afterwards.
+ *
+ * EVENT NAME — "Paris" is assumed from how Nashville was named ("Nashville").
+ * If the app labels it differently, this will quietly report 0 listings
+ * forever. Check the heartbeat: if another source shows Paris listings and
+ * the heartbeat still says 0, the event name is wrong.
  *
  * TOKEN — the captured JWT has no `exp` claim, so I can't tell you how long
  * it lasts. It may be a long-lived session or it may die whenever the app
@@ -31,18 +38,19 @@
  * alert only means something if we know what the count was last time. State
  * lives in ./state.json, committed back to the repo by the workflow after
  * each run (see roxtickets-watch.yml). Two things use it:
- *   1. Activity alert — fires once when Nashville's total available count
+ *   1. Activity alert — fires once when an event's total available count
  *      CHANGES, not on every run while a listing sits there. Stops the
- *      10-minute-forever spam the Pro Men alert deliberately still does.
+ *      10-minute-forever spam the Womens Open alert deliberately still does.
  *   2. Daily heartbeat — fires once per UTC day regardless of activity, so
  *      you get a positive "still alive" signal without 144 pings a day.
  */
 
-const EVENTS = ['Nashville']; // add more event names here later, e.g. ['Nashville', 'Anaheim']
+const EVENTS = ['Paris']; // add more event names here later, e.g. ['Paris', 'Berlin']
 
-const PRO_MEN_RE = /^mens pro$/i; // confirmed exact string
-const FALLBACK_RE = /\bpro\b.*\bmens?\b|\bmens?\b.*\bpro\b/i; // loose net if the string ever changes
-const EXCLUDE_RE = /double|relay|mixed|women/i;
+const TARGET_LABEL = 'Womens Open';
+const TARGET_RE = /^womens open$/i; // expected exact string (pattern-based, not yet captured)
+const FALLBACK_RE = /\bwom[ae]n'?s?\b.*\bopen\b|\bopen\b.*\bwom[ae]n'?s?\b/i; // wider net
+const EXCLUDE_RE = /double|relay|mixed|pro|adaptive|\bmen'?s?\b/i;
 
 const STATE_FILE = './state.json';
 
@@ -112,6 +120,9 @@ function categoryBreakdown(listings) {
 
 const state = await readState();
 if (!state.events) state.events = {};
+// Drop events no longer watched (e.g. old Nashville entry) so the heartbeat
+// and state file only reflect current targets.
+for (const k of Object.keys(state.events)) if (!EVENTS.includes(k)) delete state.events[k];
 
 let exitCode = 0;
 const today = new Date().toISOString().slice(0, 10); // UTC date, e.g. "2026-09-16"
@@ -122,13 +133,13 @@ for (const eventName of EVENTS) {
     const listings = await fetchListings(eventName);
     const available = listings.filter((t) => t.available_for === 'available');
 
-    const confirmed = available.filter((t) => PRO_MEN_RE.test(t.category_name) && !EXCLUDE_RE.test(t.category_name));
+    const confirmed = available.filter((t) => TARGET_RE.test(t.category_name));
     const fallbackOnly = available.filter(
       (t) => !confirmed.includes(t) && FALLBACK_RE.test(t.category_name) && !EXCLUDE_RE.test(t.category_name)
     );
 
     console.log(
-      `${eventName}: ${available.length} available listing(s) total, ${confirmed.length} confirmed Pro Men, ${fallbackOnly.length} fallback match`
+      `${eventName}: ${available.length} available listing(s) total, ${confirmed.length} ${TARGET_LABEL}, ${fallbackOnly.length} fallback match`
     );
 
     // Full dump for visibility — every listing regardless of category. Log only,
@@ -150,7 +161,7 @@ for (const eventName of EVENTS) {
     if (confirmed.length > 0) {
       const cheapest = confirmed.reduce((a, b) => (a.total < b.total ? a : b));
       await push({
-        title: `${eventName} - MENS PRO listing found on Hybrid Tickets`,
+        title: `${eventName} - Womens Open listing on Hybrid Tickets`,
         body: `${confirmed.length} listing(s). Cheapest: $${cheapest.total} total (ticket ${cheapest.ticket_id}).\nOpen the app to buy.`,
         priority: 'urgent',
       });
@@ -160,9 +171,9 @@ for (const eventName of EVENTS) {
     if (fallbackOnly.length > 0) {
       const cheapest = fallbackOnly.reduce((a, b) => (a.total < b.total ? a : b));
       await push({
-        title: `${eventName} - possible Pro Men listing (unconfirmed category)`,
+        title: `${eventName} - possible Womens Open listing`,
         body:
-          `Category name doesn't match the known "Mens Pro" string, but looks close: ` +
+          `Category name isn't exactly "${TARGET_LABEL}", but looks close: ` +
           `"${cheapest.category_name}" at $${cheapest.total}. Check the app.`,
         priority: 'high',
       });
