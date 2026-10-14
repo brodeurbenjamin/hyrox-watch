@@ -3,6 +3,10 @@
     "Paris": {
       "available": 1,
       "categories": "Women Open (SUN 13 Dec) x1"
+    },
+    "Phoenix": {
+      "available": 0,
+      "categories": ""
     }
   },
   "lastHeartbeat": "2026-10-14"
