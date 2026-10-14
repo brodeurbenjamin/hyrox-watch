@@ -1,7 +1,7 @@
 /**
  * hyrox-watch — official HYROX shop monitor
  * Target: FITNESS PARK HYROX PARIS (12-20 Dec 2026), Women's Open or Women's
- * Pro singles, race days 14-21 Dec only (trip is 13-21 Dec; see WINDOW_*).
+ * Pro singles, race days 16-21 Dec only (trip is 15-21 Dec; see WINDOW_*).
  *
  * Verified against france.hyrox.com on 28 Sep 2026:
  *   The France shop is a Next.js app (different from the US shop). The full
@@ -48,10 +48,10 @@ const TARGETS = [
   { key: 'SOLO_PRO_W', label: "Women's Pro", nameRe: /^(CHARITY \| )?HYROX PRO WOMEN \|/i, drill: ['Singles', 'Pro', 'Women'] },
 ];
 
-// Only race days inside the trip count (in Paris 13-21 Dec; the 13th is
-// arrival day, so the window starts on the 14th). Tickets outside it are
+// Only race days inside the trip count (in Paris 15-21 Dec; the 15th is
+// arrival day, so the window starts on the 16th). Tickets outside it are
 // logged but never alerted on.
-const WINDOW_FROM = '2026-12-14';
+const WINDOW_FROM = '2026-12-16';
 const WINDOW_TO = '2026-12-21';
 
 const NTFY_TOPIC = process.env.NTFY_TOPIC;

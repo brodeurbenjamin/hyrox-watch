@@ -11,8 +11,8 @@
  * peer marketplace, not an inventory feed) with category, price, and status.
  *
  * TARGET (13 Oct 2026): Paris, Women's Open or Women's Pro, race days inside
- * the trip window only (in Paris 13-21 Dec; the 13th is arrival day, so the
- * window is 14-21 Dec).
+ * the trip window only (in Paris 15-21 Dec; the 15th is arrival day, so the
+ * window is 16-21 Dec).
  *
  * Category naming seen in real data: "Mens Pro", "Mens Open", "Mixed
  * Doubles", and for women "Women Open" (no s; seen in state.json 13 Oct).
@@ -57,7 +57,7 @@ const TARGET_RE = /^wom[ae]n'?s? (open|pro)$/i; // "Women Open" confirmed
 const FALLBACK_RE = /\bwom[ae]n'?s?\b.*\b(open|pro)\b|\b(open|pro)\b.*\bwom[ae]n'?s?\b/i; // wider net
 const EXCLUDE_RE = /double|relay|mixed|adaptive|team|\bmen'?s?\b/i;
 
-const WINDOW_FROM = '2026-12-14';
+const WINDOW_FROM = '2026-12-16';
 const WINDOW_TO = '2026-12-21';
 
 // "19-11-2026 THU" -> "2026-11-19"; null if unreadable.
