@@ -10,13 +10,14 @@
  * Each entry in `ticketData` is one individual seller's listing (this is a
  * peer marketplace, not an inventory feed) with category, price, and status.
  *
- * TARGET (13 Oct 2026): Paris, Women's Open or Women's Pro, race days inside
- * the trip window only (in Paris 15-21 Dec; the 15th is arrival day, so the
- * window is 16-21 Dec).
+ * TARGETS (13 Oct 2026), configured per event in WATCH below:
+ *   Paris   — Women's Open or Women's Pro, race days 16-21 Dec only (in Paris
+ *             15-21 Dec; the 15th is arrival day).
+ *   Phoenix — Men's Relay, any day.
  *
  * Category naming seen in real data: "Mens Pro", "Mens Open", "Mixed
  * Doubles", and for women "Women Open" (no s; seen in state.json 13 Oct).
- * TARGET_RE accepts "Women"/"Womens" + "Open"/"Pro". FALLBACK_RE is a wider
+ * Paris `target` accepts "Women"/"Womens" + "Open"/"Pro". `fallback` is a wider
  * net; a fallback hit alerts one priority lower and quotes the real name.
  *
  * DATES — each listing has `day`, e.g. "19-11-2026 THU". Listings outside the
@@ -50,24 +51,40 @@
  *      you get a positive "still alive" signal without 144 pings a day.
  */
 
-const EVENTS = ['Paris']; // add more event names here later, e.g. ['Paris', 'Berlin']
-
-const TARGET_LABEL = "Women's Open/Pro";
-const TARGET_RE = /^wom[ae]n'?s? (open|pro)$/i; // "Women Open" confirmed
-const FALLBACK_RE = /\bwom[ae]n'?s?\b.*\b(open|pro)\b|\b(open|pro)\b.*\bwom[ae]n'?s?\b/i; // wider net
-const EXCLUDE_RE = /double|relay|mixed|adaptive|team|\bmen'?s?\b/i;
-
-const WINDOW_FROM = '2026-12-16';
-const WINDOW_TO = '2026-12-21';
+// What to watch per event. `target` = urgent alert; `fallback` (minus
+// `exclude`) = "possible" alert; `from`/`to` = race-day window (null = any day).
+const WATCH = {
+  Paris: {
+    label: "Women's Open/Pro",
+    target: /^wom[ae]n'?s? (open|pro)$/i, // "Women Open" confirmed 13 Oct
+    fallback: /\bwom[ae]n'?s?\b.*\b(open|pro)\b|\b(open|pro)\b.*\bwom[ae]n'?s?\b/i,
+    exclude: /double|relay|mixed|adaptive|team|\bmen'?s?\b/i,
+    from: '2026-12-16', // trip is 15-21 Dec, 15th is arrival day
+    to: '2026-12-21',
+  },
+  // Event name and category string are pattern-based guesses ("Phoenix",
+  // "Mens Relay"), not yet seen in real data. Check the heartbeat lists
+  // Phoenix with a sensible count once listings exist.
+  Phoenix: {
+    label: "Men's Relay",
+    target: /^men'?s? relay$/i,
+    fallback: /\bmen'?s?\b.*\brelay\b|\brelay\b.*\bmen'?s?\b/i,
+    exclude: /wom[ae]n|mixed|double|corporate/i,
+    from: null,
+    to: null,
+  },
+};
+const EVENTS = Object.keys(WATCH);
 
 // "19-11-2026 THU" -> "2026-11-19"; null if unreadable.
 export function listingDate(t) {
   const m = String(t?.day || '').match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
   return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : null;
 }
-export function inWindow(t) {
+export function inWindow(t, cfg) {
   const d = listingDate(t);
-  return d === null || (d >= WINDOW_FROM && d <= WINDOW_TO);
+  if (d === null || !cfg.from) return true;
+  return d >= cfg.from && d <= cfg.to;
 }
 function dayLabel(t) {
   const d = listingDate(t);
@@ -75,16 +92,16 @@ function dayLabel(t) {
   const dow = String(t.day).split(' ')[1] || '';
   return `${dow} ${Number(d.slice(8))} ${['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(d.slice(5, 7))]}`.trim();
 }
-export function classify(available) {
+export function classify(available, cfg) {
   const athletes = available.filter((t) => !t.spectator);
-  const confirmed = athletes.filter((t) => TARGET_RE.test(t.category_name));
+  const confirmed = athletes.filter((t) => cfg.target.test(t.category_name));
   const fallback = athletes.filter(
-    (t) => !confirmed.includes(t) && FALLBACK_RE.test(t.category_name) && !EXCLUDE_RE.test(t.category_name)
+    (t) => !confirmed.includes(t) && cfg.fallback.test(t.category_name) && !cfg.exclude.test(t.category_name)
   );
   return {
-    confirmed: confirmed.filter(inWindow),
-    fallback: fallback.filter(inWindow),
-    outOfWindow: [...confirmed, ...fallback].filter((t) => !inWindow(t)),
+    confirmed: confirmed.filter((t) => inWindow(t, cfg)),
+    fallback: fallback.filter((t) => inWindow(t, cfg)),
+    outOfWindow: [...confirmed, ...fallback].filter((t) => !inWindow(t, cfg)),
   };
 }
 
@@ -172,10 +189,11 @@ for (const eventName of EVENTS) {
     const listings = await fetchListings(eventName);
     const available = listings.filter((t) => t.available_for === 'available');
 
-    const { confirmed, fallback: fallbackOnly, outOfWindow } = classify(available);
+    const cfg = WATCH[eventName];
+    const { confirmed, fallback: fallbackOnly, outOfWindow } = classify(available, cfg);
 
     console.log(
-      `${eventName}: ${available.length} available listing(s) total, ${confirmed.length} ${TARGET_LABEL} in trip window, ${fallbackOnly.length} fallback match, ${outOfWindow.length} target-division outside window`
+      `${eventName}: ${available.length} available listing(s) total, ${confirmed.length} ${cfg.label}${cfg.from ? ' in trip window' : ''}, ${fallbackOnly.length} fallback match, ${outOfWindow.length} target-division outside window`
     );
 
     // Full dump for visibility — every listing regardless of category. Log only,
@@ -209,9 +227,9 @@ for (const eventName of EVENTS) {
     if (fallbackOnly.length > 0) {
       const cheapest = fallbackOnly.reduce((a, b) => (a.total < b.total ? a : b));
       await push({
-        title: `${eventName} - possible Women's Open/Pro listing`,
+        title: `${eventName} - possible ${cfg.label} listing`,
         body:
-          `Category name isn't exactly "${TARGET_LABEL}", but looks close: ` +
+          `Category name isn't an exact match for ${cfg.label}, but looks close: ` +
           `"${cheapest.category_name}" (${dayLabel(cheapest)}) at $${cheapest.total}. Check the app.`,
         priority: 'high',
       });

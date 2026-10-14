@@ -4,7 +4,7 @@ on:
   schedule:
     # Every 10 minutes. GitHub's scheduler drifts 10-15 min under load and can
     # skip runs entirely — fine for this. Currently watching HYROX Paris
-    # (12-20 Dec 2026) for Women's Open.
+    # (Women's Open/Pro, 16-21 Dec 2026) and HYROX Phoenix (Men's Relay).
     - cron: '*/10 * * * *'
   workflow_dispatch:        # manual run — also resets the 60-day inactivity timer
  
@@ -15,7 +15,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     container:
       # Browsers are preinstalled here, so no download on every run.
       # Keep this tag in step with the playwright version in package.json.
@@ -26,8 +26,14 @@ jobs:
       - name: Install deps
         run: npm install --no-audit --no-fund
  
-      - name: Check ticket availability
+      - name: Paris - Women's Open/Pro
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: node watch.js
+
+      - name: Phoenix - Men's Relay
+        if: ${{ !cancelled() }}   # still run if the Paris check failed
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: node phoenix-relay-watch.js
  
