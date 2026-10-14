@@ -10,14 +10,19 @@
  * Each entry in `ticketData` is one individual seller's listing (this is a
  * peer marketplace, not an inventory feed) with category, price, and status.
  *
- * TARGET (28 Sep 2026): Paris, Women's Open.
+ * TARGET (13 Oct 2026): Paris, Women's Open or Women's Pro, race days inside
+ * the trip window only (in Paris 13-21 Dec; the 13th is arrival day, so the
+ * window is 14-21 Dec).
  *
- * Category naming seen in real captures: "Mens Pro", "Mens Open",
- * "Mixed Doubles". By that pattern Women's Open should be "Womens Open", and
- * TARGET_RE matches that exact string. It has NOT been seen in a capture yet,
- * so FALLBACK_RE casts a wider net ("Women's Open", "Open Women", etc.). A
- * fallback hit still alerts, one priority lower, and the alert quotes the
- * real category name so the exact string can be locked in afterwards.
+ * Category naming seen in real data: "Mens Pro", "Mens Open", "Mixed
+ * Doubles", and for women "Women Open" (no s; seen in state.json 13 Oct).
+ * TARGET_RE accepts "Women"/"Womens" + "Open"/"Pro". FALLBACK_RE is a wider
+ * net; a fallback hit alerts one priority lower and quotes the real name.
+ *
+ * DATES — each listing has `day`, e.g. "19-11-2026 THU". Listings outside the
+ * trip window never trigger the urgent alert (they still count toward the
+ * activity ping). A listing with no readable day is treated as in-window so
+ * a format change can't silently hide a real ticket.
  *
  * EVENT NAME — "Paris" is assumed from how Nashville was named ("Nashville").
  * If the app labels it differently, this will quietly report 0 listings
@@ -47,10 +52,41 @@
 
 const EVENTS = ['Paris']; // add more event names here later, e.g. ['Paris', 'Berlin']
 
-const TARGET_LABEL = 'Womens Open';
-const TARGET_RE = /^womens open$/i; // expected exact string (pattern-based, not yet captured)
-const FALLBACK_RE = /\bwom[ae]n'?s?\b.*\bopen\b|\bopen\b.*\bwom[ae]n'?s?\b/i; // wider net
-const EXCLUDE_RE = /double|relay|mixed|pro|adaptive|\bmen'?s?\b/i;
+const TARGET_LABEL = "Women's Open/Pro";
+const TARGET_RE = /^wom[ae]n'?s? (open|pro)$/i; // "Women Open" confirmed
+const FALLBACK_RE = /\bwom[ae]n'?s?\b.*\b(open|pro)\b|\b(open|pro)\b.*\bwom[ae]n'?s?\b/i; // wider net
+const EXCLUDE_RE = /double|relay|mixed|adaptive|team|\bmen'?s?\b/i;
+
+const WINDOW_FROM = '2026-12-14';
+const WINDOW_TO = '2026-12-21';
+
+// "19-11-2026 THU" -> "2026-11-19"; null if unreadable.
+export function listingDate(t) {
+  const m = String(t?.day || '').match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+  return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : null;
+}
+export function inWindow(t) {
+  const d = listingDate(t);
+  return d === null || (d >= WINDOW_FROM && d <= WINDOW_TO);
+}
+function dayLabel(t) {
+  const d = listingDate(t);
+  if (!d) return 'day unknown';
+  const dow = String(t.day).split(' ')[1] || '';
+  return `${dow} ${Number(d.slice(8))} ${['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(d.slice(5, 7))]}`.trim();
+}
+export function classify(available) {
+  const athletes = available.filter((t) => !t.spectator);
+  const confirmed = athletes.filter((t) => TARGET_RE.test(t.category_name));
+  const fallback = athletes.filter(
+    (t) => !confirmed.includes(t) && FALLBACK_RE.test(t.category_name) && !EXCLUDE_RE.test(t.category_name)
+  );
+  return {
+    confirmed: confirmed.filter(inWindow),
+    fallback: fallback.filter(inWindow),
+    outOfWindow: [...confirmed, ...fallback].filter((t) => !inWindow(t)),
+  };
+}
 
 const STATE_FILE = './state.json';
 
@@ -112,7 +148,10 @@ async function writeState(state) {
 
 function categoryBreakdown(listings) {
   const counts = {};
-  for (const t of listings) counts[t.category_name] = (counts[t.category_name] || 0) + 1;
+  for (const t of listings) {
+    const k = `${t.category_name} (${dayLabel(t)})`;
+    counts[k] = (counts[k] || 0) + 1;
+  }
   return Object.entries(counts)
     .map(([name, n]) => `${name} x${n}`)
     .join(', ');
@@ -133,13 +172,10 @@ for (const eventName of EVENTS) {
     const listings = await fetchListings(eventName);
     const available = listings.filter((t) => t.available_for === 'available');
 
-    const confirmed = available.filter((t) => TARGET_RE.test(t.category_name));
-    const fallbackOnly = available.filter(
-      (t) => !confirmed.includes(t) && FALLBACK_RE.test(t.category_name) && !EXCLUDE_RE.test(t.category_name)
-    );
+    const { confirmed, fallback: fallbackOnly, outOfWindow } = classify(available);
 
     console.log(
-      `${eventName}: ${available.length} available listing(s) total, ${confirmed.length} ${TARGET_LABEL}, ${fallbackOnly.length} fallback match`
+      `${eventName}: ${available.length} available listing(s) total, ${confirmed.length} ${TARGET_LABEL} in trip window, ${fallbackOnly.length} fallback match, ${outOfWindow.length} target-division outside window`
     );
 
     // Full dump for visibility — every listing regardless of category. Log only,
@@ -150,7 +186,7 @@ for (const eventName of EVENTS) {
       console.log(`  all listings for ${eventName}:`);
       for (const t of listings) {
         console.log(
-          `    [${t.ticket_id}] ${t.category_name.padEnd(20)} $${t.total}` +
+          `    [${t.ticket_id}] ${t.category_name.padEnd(20)} ${dayLabel(t).padEnd(11)} $${t.total}` +
             ` status=${t.available_for}${t.charity_ticket ? ' charity' : ''}${t.is_discounted ? ' discounted' : ''}`
         );
       }
@@ -161,8 +197,10 @@ for (const eventName of EVENTS) {
     if (confirmed.length > 0) {
       const cheapest = confirmed.reduce((a, b) => (a.total < b.total ? a : b));
       await push({
-        title: `${eventName} - Womens Open listing on Hybrid Tickets`,
-        body: `${confirmed.length} listing(s). Cheapest: $${cheapest.total} total (ticket ${cheapest.ticket_id}).\nOpen the app to buy.`,
+        title: `${eventName} - ${cheapest.category_name} listing on Hybrid Tickets`,
+        body:
+          confirmed.map((t) => `${t.category_name}, ${dayLabel(t)}: $${t.total}`).join('\n') +
+          `\nOpen the app to buy.`,
         priority: 'urgent',
       });
       console.log('notification sent (confirmed match)');
@@ -171,10 +209,10 @@ for (const eventName of EVENTS) {
     if (fallbackOnly.length > 0) {
       const cheapest = fallbackOnly.reduce((a, b) => (a.total < b.total ? a : b));
       await push({
-        title: `${eventName} - possible Womens Open listing`,
+        title: `${eventName} - possible Women's Open/Pro listing`,
         body:
           `Category name isn't exactly "${TARGET_LABEL}", but looks close: ` +
-          `"${cheapest.category_name}" at $${cheapest.total}. Check the app.`,
+          `"${cheapest.category_name}" (${dayLabel(cheapest)}) at $${cheapest.total}. Check the app.`,
         priority: 'high',
       });
       console.log('notification sent (fallback match — verify category name)');

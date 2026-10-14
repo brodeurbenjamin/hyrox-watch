@@ -1,6 +1,7 @@
 /**
  * hyrox-watch — official HYROX shop monitor
- * Target: FITNESS PARK HYROX PARIS (12-20 Dec 2026), Women's Open singles
+ * Target: FITNESS PARK HYROX PARIS (12-20 Dec 2026), Women's Open or Women's
+ * Pro singles, race days 14-21 Dec only (trip is 13-21 Dec; see WINDOW_*).
  *
  * Verified against france.hyrox.com on 28 Sep 2026:
  *   The France shop is a Next.js app (different from the US shop). The full
@@ -15,16 +16,18 @@
  *   Five days: Sun 13, Wed 16, Thu 17, Fri 18, Sun 20 Dec. Each has a
  *   regular ticket and a CHARITY version (cheaper entry plus a fundraising
  *   commitment). Both count as a Women's Open spot.
+ *   Women's Pro is "SOLO_PRO_W", named "HYROX PRO WOMEN | ...", on Sat 12
+ *   and Fri 18 Dec only. In the trip window: Open 16/17/18/20, Pro 18.
  *
  * Alert tiers:
- *   URGENT — a Women's Open ticket is active, the shop shows "Singles", and
- *            after drilling Singles -> Open -> Women the ticket name is NOT
+ *   URGENT — a Women's Open/Pro ticket in the trip window is active, the shop shows "Singles", and
+ *            after drilling Singles -> Open|Pro -> Women the ticket name is NOT
  *            preceded by a SOLD OUT badge. (The US shop left sold-out tickets
  *            switched on and only drew the badge client-side, so "active"
  *            alone isn't trusted.) Active but badged SOLD OUT = no alert.
- *   HIGH   — a Women's Open ticket is active but the page can't confirm it
+ *   HIGH   — an in-window Women's Open/Pro ticket is active but the page can't confirm it
  *            (Singles not showing, or the ticket name never renders). Go look.
- *   HIGH   — the page loaded but no Women's Open tickets exist in the data
+ *   HIGH   — the page loaded but no Women's Open/Pro tickets exist in the data
  *            at all. Structure changed; the script needs updating.
  *
  * Still runs in a real browser (Playwright) because the site sits behind
@@ -35,10 +38,21 @@
 import { chromium } from 'playwright';
 
 const CHECKOUT = 'https://france.hyrox.com/checkout/69f0c46d9a89dd2b2f8f9525';
-const LABEL = "HYROX Paris - Women's Open";
-const CLASS_KEY = 'SOLO_OPEN_W';
-// Backup match in case the meta tag ever disappears.
-const NAME_RE = /^(CHARITY \| )?HYROX WOMEN \|/i;
+const LABEL = 'HYROX Paris';
+
+// Divisions to watch. `key` is HYROX's own class tag on each ticket; `nameRe`
+// is a backup in case that tag ever disappears; `drill` is the click path in
+// the shop used to read the SOLD OUT badge.
+const TARGETS = [
+  { key: 'SOLO_OPEN_W', label: "Women's Open", nameRe: /^(CHARITY \| )?HYROX WOMEN \|/i, drill: ['Singles', 'Open', 'Women'] },
+  { key: 'SOLO_PRO_W', label: "Women's Pro", nameRe: /^(CHARITY \| )?HYROX PRO WOMEN \|/i, drill: ['Singles', 'Pro', 'Women'] },
+];
+
+// Only race days inside the trip count (in Paris 13-21 Dec; the 13th is
+// arrival day, so the window starts on the 14th). Tickets outside it are
+// logged but never alerted on.
+const WINDOW_FROM = '2026-12-14';
+const WINDOW_TO = '2026-12-21';
 
 const NTFY_TOPIC = process.env.NTFY_TOPIC;
 if (!NTFY_TOPIC) { console.error('NTFY_TOPIC not set.'); process.exit(1); }
@@ -64,15 +78,35 @@ function dayOf(name) {
   return part.replace(/\s+\d{4}$/, '');
 }
 
+const MONTHS = { january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8, september: 9, october: 10, november: 11, december: 12 };
+
+// Race date as "YYYY-MM-DD", from the name ("... | Friday, December 18 2026"),
+// falling back to the ticket's relevancyDate. null if neither is readable.
+export function raceDate(t) {
+  const m = String(t?.name || '').match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})\s+(\d{4})/i);
+  if (m) return `${m[3]}-${String(MONTHS[m[1].toLowerCase()]).padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  const iso = t?.relevancyDate?.start;
+  return typeof iso === 'string' ? iso.slice(0, 10) : null;
+}
+
+export function targetOf(t) {
+  return TARGETS.find((d) => t?.meta?.competition_class_matching_key === d.key || d.nameRe.test(t?.name || '')) || null;
+}
+
+export function inWindow(t) {
+  const d = raceDate(t);
+  return d === null || (d >= WINDOW_FROM && d <= WINDOW_TO); // unknown date: don't silently drop it
+}
+
 export function evaluate(tickets, singlesVisible) {
-  const wo = tickets.filter(
-    (t) => t?.meta?.competition_class_matching_key === CLASS_KEY || NAME_RE.test(t?.name || '')
-  );
-  const active = wo.filter((t) => t.active === true);
+  const wo = tickets.filter((t) => targetOf(t));
+  const activeAll = wo.filter((t) => t.active === true);
+  const active = activeAll.filter(inWindow);
+  const outOfWindow = activeAll.filter((t) => !inWindow(t));
   let tier = 'none';
   if (wo.length === 0) tier = 'structure';
   else if (active.length > 0) tier = singlesVisible ? 'urgent' : 'possible';
-  return { wo, active, tier };
+  return { wo, active, outOfWindow, tier };
 }
 
 // Click through Singles -> Open -> Women (each step optional, since the Paris
@@ -89,8 +123,8 @@ function findName(body, name) {
   }
 }
 
-export async function checkBadges(page, active) {
-  for (const label of ['Singles', 'Open', 'Women']) {
+export async function checkBadges(page, active, drill = ['Singles', 'Open', 'Women']) {
+  for (const label of drill) {
     const opt = page.getByText(label, { exact: true }).first();
     try {
       await opt.waitFor({ state: 'visible', timeout: 8000 });
@@ -147,15 +181,26 @@ async function run() {
     const bodyText = await page.evaluate(() => document.body.innerText);
     const singlesVisible = /\bSingles\b/.test(bodyText);
 
-    let { wo, active, tier } = evaluate(tickets, singlesVisible);
+    let { wo, active, outOfWindow, tier } = evaluate(tickets, singlesVisible);
 
     // The US shop kept sold-out tickets switched ON and only drew a SOLD OUT
     // badge after drilling Category -> Class -> Gender. If Paris ever does the
     // same, "active" alone would cry wolf. So when something is active, drill
     // in and read the badge in front of each ticket name.
     if (tier === 'urgent') {
-      const verdict = await checkBadges(page, active);
-      console.log(`badge check: ${JSON.stringify(verdict)}`);
+      // One drill-down per division, reloading the shop in between.
+      const verdict = { buyable: [], soldOut: [], missing: [] };
+      for (const target of TARGETS) {
+        const group = active.filter((t) => targetOf(t) === target);
+        if (group.length === 0) continue;
+        await page.goto(CHECKOUT, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(3000);
+        const v = await checkBadges(page, group, target.drill);
+        console.log(`badge check (${target.label}): ${JSON.stringify(v)}`);
+        verdict.buyable.push(...v.buyable);
+        verdict.soldOut.push(...v.soldOut);
+        verdict.missing.push(...v.missing);
+      }
       if (verdict.buyable.length > 0) {
         active = verdict.buyable;
       } else if (verdict.soldOut.length === active.length) {
@@ -167,10 +212,14 @@ async function run() {
 
     console.log(`tickets in data: ${tickets.length}, active: ${tickets.filter((t) => t.active).length}`);
     console.log(`Singles category visible: ${singlesVisible}`);
-    for (const t of wo) console.log(`  ${t.active ? 'ACTIVE ' : 'off    '} EUR${t.price}  ${t.name}`);
+    console.log(`trip window: ${WINDOW_FROM} to ${WINDOW_TO}`);
+    for (const t of wo) {
+      const flag = !t.active ? 'off    ' : inWindow(t) ? 'ACTIVE ' : 'active (outside trip window)';
+      console.log(`  ${flag} EUR${t.price}  ${t.name}`);
+    }
 
     if (tier === 'urgent' || tier === 'possible') {
-      const days = [...new Set(active.map((t) => dayOf(t.name) + (/^CHARITY/i.test(t.name) ? ' (charity)' : '')))];
+      const days = [...new Set(active.map((t) => `${targetOf(t).label}: ${dayOf(t.name)}${/^CHARITY/i.test(t.name) ? ' (charity)' : ''}`))];
       await push({
         title: tier === 'urgent' ? LABEL : `${LABEL} - possible`,
         body:
@@ -183,13 +232,13 @@ async function run() {
     } else if (tier === 'structure') {
       await push({
         title: 'hyrox-watch: Paris page changed',
-        body: "No Women's Open tickets found in the page data. The script needs updating.",
+        body: "No Women's Open or Women's Pro tickets found in the page data. The script needs updating.",
         priority: 'high',
         click: CHECKOUT,
       });
       console.log('notification sent (structure changed)');
     } else {
-      console.log("Women's Open: all sold out");
+      console.log(`nothing buyable in the trip window${outOfWindow.length ? ` (${outOfWindow.length} active outside it)` : ''}`);
     }
   } finally {
     await browser.close();
