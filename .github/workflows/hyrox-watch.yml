@@ -15,7 +15,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
     container:
       # Browsers are preinstalled here, so no download on every run.
       # Keep this tag in step with the playwright version in package.json.

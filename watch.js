@@ -245,10 +245,26 @@ async function run() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  run().catch(async (err) => {
-    console.error(`FAILED: ${err.message}`);
-    await push({ title: 'hyrox-watch error (Paris)', body: String(err.message).slice(0, 400), priority: 'high' }).catch(() => {});
-    process.exit(1);
-  });
+// One retry after a short pause: most failures are a slow page load or a
+// network blip that clears on the next attempt. Only a second failure counts.
+async function main() {
+  try {
+    await run();
+  } catch (first) {
+    console.log(`attempt 1 failed: ${first.message} - retrying in 20s`);
+    await new Promise((r) => setTimeout(r, 20000));
+    try {
+      await run();
+    } catch (err) {
+      const msg = String(err.message).split('\n')[0].slice(0, 300);
+      console.error(`FAILED: ${err.message}`);
+      // Shows up as the failure reason on the GitHub run page (and is readable
+      // through the API, unlike the full log).
+      console.log(`::error title=Paris check failed::${msg}`);
+      await push({ title: 'hyrox-watch error (Paris)', body: msg, priority: 'high' }).catch(() => {});
+      process.exit(1);
+    }
+  }
 }
+
+if (import.meta.url === `file://${process.argv[1]}`) main();
