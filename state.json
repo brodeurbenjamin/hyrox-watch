@@ -1,8 +1,8 @@
 {
   "events": {
     "Paris": {
-      "available": 3,
-      "categories": "Mens Pro (SAT 12 Dec) x1, Womens Pro Doubles (SAT 19 Dec) x1, Women Open (SUN 13 Dec) x1"
+      "available": 2,
+      "categories": "Womens Pro Doubles (SAT 19 Dec) x1, Women Open (SUN 13 Dec) x1"
     },
     "Phoenix": {
       "available": 0,
